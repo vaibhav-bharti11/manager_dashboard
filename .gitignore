@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*
+!.env.example
+ADMIN_LOGIN.local.txt
+*.local.json
+*.local.sql
+docs/previews/
+release-source.zip
+*.log

@@ -1,0 +1,13 @@
+import {readFile} from 'node:fs/promises';
+import {createClient} from '@supabase/supabase-js';
+const env=Object.fromEntries((await readFile('.env.local','utf8')).trim().split(/\r?\n/).map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)]}));
+const credentials=await readFile('ADMIN_LOGIN.local.txt','utf8');
+const client=createClient(env.VITE_SUPABASE_URL,env.VITE_SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const {data,error}=await client.auth.signInWithPassword({email:credentials.match(/Email: (.+)/)[1],password:credentials.match(/Password: (.+)/)[1]});
+if(error)throw new Error(error.message);
+console.log('Live admin sign-in succeeded. Token algorithm:',JSON.parse(Buffer.from(data.session.access_token.split('.')[0],'base64url').toString()).alg);
+const result=await client.functions.invoke('employee-admin',{body:{name:'Validation Test',email:'not-an-email',password:'not-valid',restaurant_id:'kampai'}});
+if(!result.error)throw new Error('Invalid employee payload was unexpectedly accepted');
+const body=await result.error.context.json();
+console.log('Employee service validation response:',result.error.context.status,body);
+await client.auth.signOut({scope:'local'});
