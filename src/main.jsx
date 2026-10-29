@@ -50,6 +50,7 @@ import {
 } from "./policy.mjs";
 import { kinds, labels, briefing } from "./constants.mjs";
 import templates from "./templates.json";
+import { refreshPolicyDraft } from "./policyDraft.mjs";
 import "./style.css";
 const IconFor = {
   opening: Sun,
@@ -1308,11 +1309,12 @@ function Performance({
     </>
   );
 }
-function Field({ label, children, wide = false }) {
+function Field({ label, children, wide = false, hint }) {
   return (
     <label className={wide ? "wide" : ""}>
       {label}
       {children}
+      {hint && <small className="field-help">{hint}</small>}
     </label>
   );
 }
@@ -2215,43 +2217,21 @@ function ReportForm({
     </section>
   );
 }
-function SettingsPage({ policies, restaurants, users, onSave }) {
+export function SettingsPage({ policies, restaurants, users, onSave }) {
   const [rid, setRid] = useState(restaurants[0]?.id),
     [type, setType] = useState("opening"),
-    [form, setForm] = useState({}),
+    [draft, setDraft] = useState(() => refreshPolicyDraft(null, rid, "opening", policies)),
     [err, setErr] = useState(""),
     [busy, setBusy] = useState(false);
+  const form = draft.form;
   useEffect(() => {
-    const existing = policies.find(
-      (p) => p.restaurant_id === rid && p.type === type && p.current !== false,
-    );
-    setForm(
-      existing
-        ? {
-            ...existing,
-            incident_rule:
-              existing.incident_rule || existing.approvals?.incident_rule,
-            handover_rule:
-              existing.handover_rule || existing.approvals?.handover_rule,
-          }
-        : {
-            restaurant_id: rid,
-            type,
-            start_time: "",
-            end_time: "",
-            reward: "",
-            baseline: "",
-            enabled: false,
-            timezone: "Asia/Kolkata",
-            operating_days: [],
-            approvals: {},
-          },
-    );
+    setDraft((previous) => refreshPolicyDraft(previous, rid, type, policies));
   }, [rid, type, policies]);
   const set = (k, v) =>
-    setForm((p) => ({
+    setDraft((p) => ({
       ...p,
-      [k]: v,
+      dirty: true,
+      form: { ...p.form, [k]: v },
     }));
   return (
     <>
@@ -2273,6 +2253,7 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                 if (form.start_time === form.end_time)
                   throw Error("Opening and closing times must differ.");
                 await onSave(form);
+                setDraft((p) => p.form === form ? { ...p, dirty: false } : p);
               } catch (e) {
                 setErr(e.message);
               } finally {
@@ -2365,19 +2346,19 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                   }
                 />
               </Field>
-              <Field label="Incident obligation">
+              <Field label="When must an incident report be submitted?" hint="For incident reports: the manager submits on every selected reporting day, even when nothing happened. They can select ‘No incidents’ in the form.">
                 <select
                   value={form.incident_rule || ""}
                   required={type === "incident"}
                   onChange={(e) => set("incident_rule", e.target.value)}
                 >
-                  <option value="">To be confirmed</option>
+                  <option value="">Choose the incident reporting rule</option>
                   <option value="daily_declaration">
-                    Daily report / no-incident declaration
+                    Every reporting day, including days with no incidents
                   </option>
                 </select>
               </Field>
-              <Field label="Opening handover source">
+              <Field label="Which closing report should opening staff review?" hint="For opening reports: use the previous service day's closing report so the next team can follow up on unfinished work.">
                 <select
                   value={form.handover_rule || ""}
                   onChange={(e) => set("handover_rule", e.target.value)}
@@ -2388,7 +2369,7 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                   </option>
                 </select>
               </Field>
-              <Field label="Accountable manager">
+              <Field label="Manager responsible for this form">
                 <select
                   value={form.manager_id || ""}
                   onChange={(e) => set("manager_id", e.target.value)}
@@ -2405,7 +2386,7 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                     ))}
                 </select>
               </Field>
-              <Field label="Effective from">
+              <Field label="Start using this schedule on" hint="Choose tomorrow or a later date. Existing report deadlines will stay the same.">
                 <input
                   type="date"
                   value={form.effective_from || ""}
@@ -2414,7 +2395,8 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                 />
               </Field>
               <Field
-                label="Closed service dates (one YYYY-MM-DD per line)"
+                label="Extra dates when this form is not required"
+                hint="Optional: enter closed dates such as 2026-12-25, one per line. No missed-form deduction is created for these dates."
                 wide
               >
                 <textarea
@@ -2430,7 +2412,8 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                 />
               </Field>
             </div>
-            <h3 className="form-section-title">Operating days</h3>
+            <h3 className="form-section-title">Days this form must be filled</h3>
+            <p className="policy-help">Select the weekdays when this manager must submit this form. Choose all seven days if the restaurant operates every day. Unchecked days do not create a missed-form deduction.</p>
             <div className="checkbox-list">
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
                 (day, i) => (
@@ -2457,18 +2440,19 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
             {
               <>
                 <h3 className="form-section-title">
-                  Approved production policies
+                  Confirm the rules before activating
                 </h3>
+                <p className="policy-help">These are confirmations by you, the admin. Tick each item after agreeing the rule with your team. All eight are required to activate this schedule; you can save without activating while you decide.</p>
                 <div className="checkbox-list">
                   {[
-                    ["calendar", "Calendar and times"],
-                    ["points", "Points and score floor"],
-                    ["reset", "Sunday reset and timezone"],
-                    ["responsibility", "Manager responsibility"],
-                    ["incident", "Incident obligations"],
-                    ["handover", "Handover linkage"],
-                    ["director", "Director audience"],
-                    ["retention", "Retention and acknowledgment"],
+                    ["calendar", "I have checked the reporting days and deadlines."],
+                    ["points", "I have agreed the rewards, deductions and minimum score."],
+                    ["reset", "I have agreed when points reset each Sunday (India time)."],
+                    ["responsibility", "The assigned manager knows they must submit this form."],
+                    ["incident", "The team knows to report incidents, including days with none."],
+                    ["handover", "Opening staff know to review the previous closing report."],
+                    ["director", "I have agreed who should review highlighted issues."],
+                    ["retention", "I have agreed how long to keep records and who signs forms."],
                   ].map(([key, label]) => (
                     <label className="check-label" key={key}>
                       <input
@@ -2490,9 +2474,7 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
             <div className="window-banner">
               <Clock size={18} />
               <span>
-                Earlier deadlines indicate an overnight window. Changes apply
-                prospectively; existing occurrences retain their original
-                deadlines.
+                If the deadline is earlier than the opening time, it falls on the next day. Changes start on your chosen date and do not change existing report deadlines.
               </span>
             </div>
             <label className="check-label">
@@ -2501,11 +2483,11 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                 checked={form.enabled || false}
                 onChange={(e) => set("enabled", e.target.checked)}
               />
-              {"Activate only after every policy below is approved"}
+              {"Turn on this reporting schedule"}
             </label>
             {err && <p className="error">{err}</p>}
             <button className="button dark" disabled={busy}>
-              {busy ? "Saving…" : "Save reporting window"}
+              {busy ? "Saving…" : "Save reporting schedule"}
               <Check size={15} />
             </button>
           </form>
@@ -2513,20 +2495,20 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
         <section className="surface policy-checklist">
           <div className="panel-heading">
             <div>
-              <h3>Before going live</h3>
-              <p>Production policy checklist</p>
+              <h3>Ready to activate?</h3>
+              <p>Your confirmations for this reporting schedule</p>
             </div>
             <ShieldCheck size={20} />
           </div>
           {[
-            "Exact time windows and operating calendar",
-            "On-time award, starting score and score floor",
-            "Sunday reset time and reporting timezone",
-            "Manager responsibility for each report",
-            "Incident / no-incident declaration policy",
-            "Closing-to-opening handover linkage",
-            "Director audience and highlight access",
-            "Evidence retention and staff sign-off",
+            "Reporting days and deadlines",
+            "Rewards, deductions and minimum score",
+            "Sunday points reset",
+            "Manager assigned and informed",
+            "Incident reporting understood",
+            "Opening team handover understood",
+            "Highlighted issue reviewers agreed",
+            "Record keeping and signatures agreed",
           ].map((t, i) => (
             <div className="policy-item" key={t}>
               <span>{t}</span>
@@ -2543,14 +2525,14 @@ function SettingsPage({ policies, restaurants, users, onSave }) {
                     "retention",
                   ][i]
                 ]
-                  ? "Approved"
-                  : "To be confirmed"}
+                  ? "Confirmed"
+                  : "Needs confirmation"}
               </span>
             </div>
           ))}
           <p className="policy-foot">
             {
-              "Activation is blocked until the approved policy fields are present in the database."
+              "To turn this schedule on, complete the required fields, select at least one reporting day, assign a manager and confirm all eight rules. Leave ‘Turn on this reporting schedule’ unchecked to save it without starting reports or deductions."
             }
           </p>
         </section>
