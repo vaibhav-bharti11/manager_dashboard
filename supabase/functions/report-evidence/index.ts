@@ -30,10 +30,10 @@ Deno.serve(async (req: Request) => {
     return reply({ error: "Session expired. Sign in again." }, 401);
   const { data: actor } = await db
     .from("profiles")
-    .select("id,role,restaurant_id")
+    .select("id,role,restaurant_id,active")
     .eq("id", identity.user.id)
     .single();
-  if (actor?.role !== "manager")
+  if (actor?.role !== "manager" || !actor?.active)
     return reply(
       { error: "Only the assigned restaurant manager can upload evidence." },
       403,
