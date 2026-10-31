@@ -1,118 +1,72 @@
-function requireAdmin(profile) {
-  if (!profile || profile.role !== "admin")
-    throw new Error("Administrator access required");
-  return profile.id;
+function normalizePhone(value) {
+ const raw=String(value||'').trim();if(!/^[+\d\s()-]+$/.test(raw))throw Error('Enter a valid phone number.');
+ let digits=raw.replace(/\D/g,'');
+ if(digits.length===10&&!raw.startsWith('+'))digits='91'+digits;
+ if(!/^[1-9]\d{7,14}$/.test(digits))throw Error('Enter a valid phone number with country code.');
+ return '+'+digits;
 }
-function employeeInput(body) {
-  const name = String(body?.name || "").trim(),
-    email = String(body?.email || "")
-      .trim()
-      .toLowerCase(),
-    password = String(body?.password || ""),
-    restaurant_id = body?.restaurant_id;
-  if (body?.role && body.role !== "manager")
-    throw new Error("Employees must have the manager role.");
-  if (name.length < 2 || name.length > 120)
-    throw new Error("Enter an employee name between 2 and 120 characters.");
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)
-    throw new Error("Enter a valid employee email.");
-  if (password.length < 12 || new TextEncoder().encode(password).length > 72)
-    throw new Error(
-      "Use a password with at least 12 characters and at most 72 bytes.",
-    );
-  if (
-    !["embassy-vasant", "embassy-elan", "kampai", "basque"].includes(
-      restaurant_id,
-    )
-  )
-    throw new Error("Choose one of the four restaurants.");
-  return { name, email, password, restaurant_id };
+function validatePin(value) {
+ if(typeof value!=='string'||!/^\d{4}$/.test(value))throw Error('Choose a PIN with exactly four digits.');
+ return value;
+}
+function makeActivationCode() {
+ return Array.from(crypto.getRandomValues(new Uint8Array(18)),v=>v.toString(16).padStart(2,'0')).join('');
+}
+async function hashActivationCode(value) {
+ return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),v=>v.toString(16).padStart(2,'0')).join('');
+}
+async function hashPin(pin,salt=makeActivationCode()) {
+ validatePin(pin);
+ const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(pin),'PBKDF2',false,['deriveBits']);
+ const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations:210000,hash:'SHA-256'},key,256);
+ return {salt,hash:Array.from(new Uint8Array(bits),v=>v.toString(16).padStart(2,'0')).join('')};
+}
+async function verifyPin(pin,stored) {
+ if(!stored?.hash||!stored?.salt||typeof pin!=='string'||!/^\d{4}$/.test(pin))return false;
+ const next=await hashPin(pin,stored.salt);let difference=next.hash.length^stored.hash.length;
+ for(let i=0;i<next.hash.length;i++)difference|=next.hash.charCodeAt(i)^(stored.hash.charCodeAt(i)||0);
+ return difference===0;
 }
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const reply = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      ...cors,
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    },
-  });
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
-  const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
-  if (!token) return reply({ error: "Sign in as an administrator." }, 401);
-  const service = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { auth: { persistSession: false, autoRefreshToken: false } },
-  );
-  const { data: identity, error: authError } =
-    await service.auth.getUser(token);
-  if (authError || !identity.user)
-    return reply({ error: "Your session expired. Sign in again." }, 401);
-  const { data: actor } = await service
-    .from("profiles")
-    .select("id,role")
-    .eq("id", identity.user.id)
-    .single();
-  try {
-    requireAdmin(actor);
-  } catch {
-    return reply({ error: "Administrator access required" }, 403);
+function requireAdmin(profile) {
+ if(!profile||profile.role!=='admin'||profile.active===false)throw Error('Administrator access required');
+ return profile.id;
+}
+function employeeInput(body) {
+ const name=String(body?.name||'').trim(),phone=normalizePhone(body?.phone),restaurant_id=body?.restaurant_id;
+ if(body?.role&&body.role!=='manager')throw Error('Employees must have the manager role.');
+ if(name.length<2||name.length>120)throw Error('Enter an employee name between 2 and 120 characters.');
+ if(body?.pin!==undefined||body?.password!==undefined)throw Error('The employee chooses their own PIN using an activation code.');
+ if(!['embassy-vasant','embassy-elan','kampai','basque'].includes(restaurant_id))throw Error('Choose one of the four restaurants.');
+ return {name,phone,restaurant_id};
+}
+
+import {createClient} from 'npm:@supabase/supabase-js@2';
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,x-client-info,apikey,content-type','Access-Control-Allow-Methods':'POST,OPTIONS'};
+const reply=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json','Cache-Control':'no-store'}});
+Deno.serve(async(req:Request)=>{
+ if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
+ if(req.method!=='POST')return reply({error:'Method not allowed'},405);
+ const service=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false,autoRefreshToken:false}});
+ const token=req.headers.get('Authorization')?.replace(/^Bearer\s+/i,'');
+ const {data:identity,error:authError}=await service.auth.getUser(token||'');
+ if(authError||!identity.user)return reply({error:'Your session expired. Sign in again.'},401);
+ const {data:actor}=await service.from('profiles').select('id,role,active').eq('id',identity.user.id).single();
+ try{requireAdmin(actor)}catch{return reply({error:'Administrator access required'},403)}
+ try{
+  const raw=await req.text();if(raw.length>16384)return reply({error:'Request is too large'},413);
+  const body=JSON.parse(raw),code=makeActivationCode(),codeHash=await hashActivationCode(code);
+  if(body.action==='issue_setup'){
+   const phone=normalizePhone(body.phone);
+   const {error}=await service.rpc('issue_phone_setup',{p_actor:actor!.id,p_user:body.user_id,p_phone:phone,p_hash:codeHash});
+   if(error)return reply({error:error.message},400);
+   return reply({activation_code:code,expires_in_hours:24,phone});
   }
-  let input;
-  try {
-    const raw = await req.text();
-    if (raw.length > 16384)
-      return reply({ error: "Request is too large" }, 413);
-    input = employeeInput(JSON.parse(raw));
-  } catch (e) {
-    return reply(
-      { error: e instanceof Error ? e.message : "Invalid employee details" },
-      400,
-    );
-  }
-  const { data: created, error } = await service.auth.admin.createUser({
-    email: input.email,
-    password: input.password,
-    email_confirm: true,
-    user_metadata: { full_name: input.name },
-  });
-  if (error || !created.user)
-    return reply({ error: error?.message || "Could not create employee" }, 400);
-  const { error: profileError } = await service.rpc("register_employee", {
-    p_id: created.user.id,
-    p_name: input.name,
-    p_email: input.email,
-    p_restaurant: input.restaurant_id,
-    p_actor: actor!.id,
-  });
-  if (profileError) {
-    await service.auth.admin.deleteUser(created.user.id);
-    return reply(
-      {
-        error:
-          "Employee setup failed; no account was activated. Please try again.",
-      },
-      500,
-    );
-  }
-  return reply({
-    employee: {
-      id: created.user.id,
-      name: input.name,
-      email: input.email,
-      restaurant_id: input.restaurant_id,
-      role: "manager",
-    },
-  });
+  const input=employeeInput(body),email=crypto.randomUUID()+'@accounts.service.invalid';
+  const {data:created,error}=await service.auth.admin.createUser({email,password:makeActivationCode()+makeActivationCode(),email_confirm:true,user_metadata:{full_name:input.name}});
+  if(error||!created.user)return reply({error:'Could not create this employee.'},400);
+  const {error:setupError}=await service.rpc('provision_phone_employee',{p_actor:actor!.id,p_user:created.user.id,p_name:input.name,p_email:email,p_restaurant:input.restaurant_id,p_phone:input.phone,p_hash:codeHash});
+  if(setupError){await service.auth.admin.deleteUser(created.user.id);return reply({error:'Employee setup failed. Check whether this phone number already has an account.'},400)}
+  return reply({employee:{id:created.user.id,name:input.name,phone:input.phone,restaurant_id:input.restaurant_id,role:'manager'},activation_code:code,expires_in_hours:24});
+ }catch(e){return reply({error:e instanceof Error?e.message:'Invalid employee details'},400)}
 });

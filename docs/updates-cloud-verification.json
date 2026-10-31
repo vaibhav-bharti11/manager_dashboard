@@ -1,0 +1,14 @@
+{
+  "verified_at": "2026-10-29T19:50:14.797Z",
+  "checks": [
+    "admin creates phone-based manager and one-time code",
+    "activation sets own PIN and creates a real session",
+    "activation code cannot be reused",
+    "phone and PIN sign-in works",
+    "manager cannot reset restaurant points or read other profiles",
+    "only signed-in owner changes PIN; old PIN stops working",
+    "PIN hashes and activation credentials stay inaccessible to managers",
+    "admin deactivation blocks sign-in and an existing session",
+    "restoring access keeps the same manager identity"
+  ]
+}
