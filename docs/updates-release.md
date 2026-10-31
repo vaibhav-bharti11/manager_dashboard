@@ -13,8 +13,8 @@ Implements the supplied October 30 brief and the user's clarifications.
 
 ## Verification
 
-83 automated checks passed, including PostgreSQL migration/RLS tests and all four report types under the new scoring model. The production build passed. Live API checks verified activation, PIN login/change, one-use codes, role isolation, deactivation with an existing session, and restoration. The actual manager workspace and date-range controls were also checked in the built-in browser.
+84 automated checks passed, including PostgreSQL migration/RLS tests and all four report types under the new scoring model. The production build passed. Live API checks verified activation, PIN login/change, one-use codes, role isolation, deactivation with an existing session, and restoration. The actual manager workspace and date-range controls were also checked in the built-in browser.
 
-Supabase migrations 003–008 and the employee-admin, phone-auth and report-evidence services were deployed before the frontend. The existing reconciliation cron runs every minute; form-submission alerts also update in the scoring transaction. `phone-auth` is a public sign-in endpoint with PIN checks and persistent attempt limits; signed-in PIN changes validate the user's JWT and current PIN.
+Supabase migrations 003–008 and the employee-admin, phone-auth and report-evidence services were deployed before the frontend. Migration 009 adds an inactive-assignment safeguard across older schedule versions. The existing reconciliation cron runs every minute; form-submission alerts also update in the scoring transaction. `phone-auth` is a public sign-in endpoint with PIN checks and persistent attempt limits; signed-in PIN changes validate the user's JWT and current PIN.
 
 No real PINs, activation codes, backend keys, test sessions or local private files belong in the repository. Deployment reads the public Supabase URL and publishable key from Netlify environment variables.
