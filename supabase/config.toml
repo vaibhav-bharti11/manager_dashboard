@@ -1,0 +1,8 @@
+[functions.phone-auth]
+verify_jwt = false
+
+[functions.employee-admin]
+verify_jwt = true
+
+[functions.report-evidence]
+verify_jwt = true
