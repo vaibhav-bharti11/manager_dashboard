@@ -9,7 +9,7 @@ test('manual zero-based cycles, configurable deductions and daily schedules',asy
  create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
  grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;
  create schema storage;create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);create table storage.objects(id uuid,bucket_id text,name text);alter table storage.objects enable row level security;create function storage.foldername(text) returns text[] language sql as $$select string_to_array($1,'/')$$;`);
- for(const file of ['001_restaurant_monitor.sql','002_employee_management.sql','003_evidence_and_live_updates.sql','004_atomic_highlights.sql','005_score_cycles_and_daily_reports.sql','006_benchmark_alerts.sql','007_phone_pin_and_deactivation.sql','008_cycle_reconciliation.sql'])await db.exec(await readFile('supabase/migrations/'+file,'utf8'));
+ for(const file of ['001_restaurant_monitor.sql','002_employee_management.sql','003_evidence_and_live_updates.sql','004_atomic_highlights.sql','005_score_cycles_and_daily_reports.sql','006_benchmark_alerts.sql','007_phone_pin_and_deactivation.sql','008_cycle_reconciliation.sql','009_inactive_assignment_guards.sql'])await db.exec(await readFile('supabase/migrations/'+file,'utf8'));
  await db.exec(await readFile('supabase/seed_templates.sql','utf8'));
  const admin='11111111-1111-4111-8111-111111111111',manager='22222222-2222-4222-8222-222222222222';
  await db.query('insert into auth.users values($1),($2)',[admin,manager]);
@@ -138,5 +138,14 @@ test('manual zero-based cycles, configurable deductions and daily schedules',asy
   assert.notEqual(await scalar("select current_cycle_id from score_settings where restaurant_id='kampai'"),before);
   assert.equal(await scalar('select points from current_score_totals where manager_id=$1',[manager]),0);
   assert.equal(await asUser(admin,()=>scalar("select count(*)::int from score_alerts where manager_id=$1 and active and kind='below_benchmark'",[manager])),1);
+ });
+ await t.test('deactivation stops older policy versions and blocks new inactive assignments',async()=>{
+  await db.query(`insert into policies(restaurant_id,type,version,current,enabled,start_time,end_time,timezone,manager_id,reward,missed_penalty,effective_from)
+    select restaurant_id,type,version+100,false,true,start_time,end_time,timezone,manager_id,reward,missed_penalty,effective_from from policies where id=$1`,[policy]);
+  await asUser(admin,()=>db.query('select set_account_active($1,false)',[manager]));
+  assert.equal(await scalar('select count(*)::int from policies where manager_id=$1 and enabled',[manager]),0);
+  await assert.rejects(()=>db.query('update policies set enabled=true where id=$1',[policy]),/active manager/);
+  await asUser(admin,()=>db.query('select set_account_active($1,true)',[manager]));
+  assert.equal(await scalar('select count(*)::int from policies where manager_id=$1 and enabled',[manager]),0);
  });
 });
