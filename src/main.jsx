@@ -2356,9 +2356,10 @@ export function SettingsPage({ policies, restaurants, users, onSave,scoreSetting
                   onChange={(e) => set("manager_id", e.target.value)}
                 >
                   <option value="">Assign manager</option>
+                  {users.find(u=>u.id===form.manager_id)?.active===false && <option value={form.manager_id} disabled>Deactivated manager — choose another</option>}
                   {users
                     .filter(
-                      (u) => u.restaurant_id === rid && u.role === "manager",
+                      (u) => u.restaurant_id === rid && u.role === "manager" && u.active!==false,
                     )
                     .map((u) => (
                       <option key={u.id} value={u.id}>
