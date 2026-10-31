@@ -1029,6 +1029,37 @@ label.wide {
   color: #62513f;
   font-weight: 400;
 }
+.date-range-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.date-range-filter > div { margin-right: auto; }
+.date-range-filter small { display: block; margin-top: 5px; font-size: 11px; }
+.date-range-filter label { display: grid; gap: 6px; font-size: 11px; }
+.date-range-filter .error { flex-basis: 100%; }
+.range-report-status { font-size: 10px; white-space: nowrap; }
+.manager-range-summary { margin-top: 20px; }
+.scoring-settings { padding: 24px; margin-bottom: 20px; }
+.reset-confirm { margin-top: 16px; }
+.reset-confirm p { font-size: 12px; line-height: 1.6; margin-bottom: 12px; }
+.reset-confirm button + button { margin-left: 10px; }
+.score-alert-list { display: grid; gap: 10px; margin-bottom: 18px; }
+.score-alert { display: flex; gap: 12px; padding: 14px 18px; border: 1px solid #a8663b77; background: #fff2dbeb; border-radius: 12px; color: #69451f; }
+.score-alert svg { flex-shrink: 0; margin-top: 2px; }
+.score-alert strong { font-size: 12px; }
+.score-alert p { font-size: 11px; line-height: 1.6; margin-top: 4px; }
+.login-modes { margin: 20px 0 6px; }
+.legacy-admin { margin-top: 18px; }
+.activation-result { padding: 24px; margin-bottom: 20px; }
+.activation-result p { font-size: 12px; line-height: 1.6; margin: 12px 0; max-width: 65ch; }
+.activation-code { display: block; overflow-wrap: anywhere; font: 16px monospace; background: #fff9; padding: 14px; border-radius: 8px; }
+.activation-result button + button { margin-left: 10px; }
+.access-confirm { min-width: 180px; max-width: 260px; }
+.access-confirm small { display: block; line-height: 1.5; margin-bottom: 8px; }
 .policy-help {
   margin: 8px 0 14px;
   max-width: 70ch;

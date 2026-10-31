@@ -38,19 +38,18 @@ import {
   FileText,
   Info,
 } from "lucide-react";
-import { supabase, signIn, readTable, rpc, createEmployee } from "./api.mjs";
+import { supabase, signIn, signInPhone, issuePhoneSetup, readTable, rpc, createEmployee } from "./api.mjs";
 import Employees from "./Employees.jsx";
-import { employeeInput } from "../supabase/functions/employee-admin/validation.mjs";
 import {
   stateOf,
   resolveWindow,
   validateResponses,
-  weekStart,
-  configuredWeekStart,
 } from "./policy.mjs";
 import { kinds, labels, briefing } from "./constants.mjs";
 import templates from "./templates.json";
 import { refreshPolicyDraft } from "./policyDraft.mjs";
+import { indiaDate, historyStart, validateRange, inDateRange, summarizeRange } from "./reportingRange.mjs";
+import ScoringSettings from "./ScoringSettings.jsx";
 import "./style.css";
 const IconFor = {
   opening: Sun,
@@ -90,9 +89,10 @@ function App() {
     [reports, setReports] = useState([]),
     [occurrences, setOccurrences] = useState([]),
     [ledger, setLedger] = useState([]),
-    [weeks, setWeeks] = useState([]),
     [users, setUsers] = useState([]),
     [highlights, setHighlights] = useState([]);
+  const [scoreSettings,setScoreSettings]=useState([]),[scoreCycles,setScoreCycles]=useState([]),[scoreTotals,setScoreTotals]=useState([]);
+  const [scoreAlerts,setScoreAlerts]=useState([]);
   const [page, setPage] = useState("overview"),
     [restaurantId, setRestaurantId] = useState("all"),
     [reportType, setReportType] = useState("opening"),
@@ -103,7 +103,7 @@ function App() {
     [lastSynced, setLastSynced] = useState(null),
     [showNotifications, setShowNotifications] = useState(false),
     [query, setQuery] = useState(""),
-    [period, setPeriod] = useState("This week"),
+    [dateRange, setDateRange] = useState(() => ({from:indiaDate(),to:indiaDate()})),
     [filter, setFilter] = useState("all");
   const [tick, setTick] = useState(Date.now());
   useEffect(() => {
@@ -136,7 +136,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [rs, ps, re, oc, ls, hs, ws, us] = await Promise.all(
+      const [rs, ps, re, oc, ls, hs, us, ss, sc, st, sa] = await Promise.all(
         [
           "restaurants",
           "policies",
@@ -144,10 +144,16 @@ function App() {
           "occurrences",
           "score_ledger",
           "highlights",
-          "score_weeks",
           "profiles",
+          "score_settings", "score_cycles", "current_score_totals",
+          "score_alerts",
         ].map(readTable),
       );
+      if (us.find(u=>u.id===profile?.id)?.active===false) {
+        setProfile(null);
+        await supabase.auth.signOut({scope:'local'});
+        return false;
+      }
       setRestaurants(
         rs.map((r) => ({
           ...r,
@@ -157,7 +163,8 @@ function App() {
             .join(", "),
         })),
       );
-      setWeeks(ws);
+      setScoreSettings(ss);setScoreCycles(sc);setScoreTotals(st);
+      setScoreAlerts(sa.filter(a=>a.active));
       setUsers(us);
       setPolicies(ps);
       setReports(
@@ -189,7 +196,7 @@ function App() {
           .select("*")
           .eq("id", data.session.user.id)
           .single();
-        if (p) {
+        if (p?.active) {
           setProfile(p);
           setRestaurantId(p.restaurant_id || "all");
         }
@@ -215,6 +222,7 @@ function App() {
       "score_ledger",
       "occurrences",
       "highlights",
+      "score_alerts",
     ])
       channel = channel.on(
         "postgres_changes",
@@ -227,35 +235,7 @@ function App() {
       supabase.removeChannel(channel);
     };
   }, [profile?.id]);
-  const currentPoints = (rid, managerId) => {
-    const activeWeeks = weeks.filter(
-      (w) =>
-        w.restaurant_id === rid &&
-        (!managerId || w.manager_id === managerId) &&
-        w.starts_on === configuredWeekStart(now, w.timezone, w.reset_time),
-    );
-    if (!activeWeeks.length) {
-      const configured = policies.filter(
-        (p) =>
-          p.restaurant_id === rid &&
-          p.current &&
-          p.enabled &&
-          (!managerId || p.manager_id === managerId),
-      );
-      if (!configured.length) return "TBC";
-      return [
-        ...new Map(configured.map((p) => [p.manager_id, p.baseline])).values(),
-      ].reduce((n, v) => n + v, 0);
-    }
-    return activeWeeks.reduce((n, w) => {
-      let v =
-        w.baseline +
-        ledger
-          .filter((l) => l.week_id === w.id)
-          .reduce((x, l) => x + l.amount, 0);
-      return n + (w.score_floor == null ? v : Math.max(w.score_floor, v));
-    }, 0);
-  };
+  const currentPoints = (rid, managerId) => scoreTotals.filter(s=>s.restaurant_id===rid&&(!managerId||s.manager_id===managerId)).reduce((n,s)=>n+s.points,0);
   const getPolicy = (r, t) =>
     policies.find(
       (p) => p.restaurant_id === r && p.type === t && p.current !== false,
@@ -271,19 +251,17 @@ function App() {
     );
   };
   const status = (r, t) => stateOf(getOccurrence(r, t), now);
-  const allStates = visibleRestaurants.flatMap((r) =>
-    kinds.map((t) => ({
-      restaurant: r,
-      type: t,
-      status: status(r.id, t),
-    })),
-  );
-  const done = allStates.filter((x) => x.status === "Submitted").length,
-    scheduledCount = allStates.filter(
-      (x) => x.status !== "Policy not configured",
-    ).length,
-    missed = allStates.filter((x) => x.status === "Missed").length,
-    open = allStates.filter((x) => x.status === "Open").length;
+  const rangeReports = visibleReports.filter(r=>inDateRange(r,dateRange.from,dateRange.to));
+  const rangeLedger = ledger.filter(l=>(scope==='all'||l.restaurant_id===scope)&&inDateRange(l,dateRange.from,dateRange.to));
+  const rangeSummary = summarizeRange({
+    reports:visibleReports,ledger:rangeLedger,
+    occurrences:occurrences.filter(o=>scope==='all'||o.restaurant_id===scope),
+    users:users.filter(u=>scope==='all'||u.restaurant_id===scope),
+    ...dateRange,now,
+  });
+  const done = rangeSummary.submitted, scheduledCount=rangeSummary.scheduled,
+    missed=rangeSummary.missed, open=rangeSummary.awaited;
+  const rangeLabel=dateRange.from===dateRange.to?dateRange.from:`${dateRange.from} – ${dateRange.to}`;
   function openForm(type, rid) {
     setRestaurantId(
       rid || (scope === "all" || !scope ? restaurants[0]?.id : scope),
@@ -330,7 +308,7 @@ function App() {
         "Shift",
         "Submitted at (UTC)",
       ],
-      ...visibleReports
+      ...rangeReports
         .filter(matches)
         .map((r) => [
           restaurants.find((x) => x.id === r.restaurant_id)?.name,
@@ -391,8 +369,8 @@ function App() {
   if (!profile)
     return (
       <Login
-        onLogin={async (e, p) => {
-          const user = await signIn(e, p);
+        onLogin={async (e, p, mode, activationCode) => {
+          const user = mode==='admin'?await signIn(e,p):await signInPhone(e,p,activationCode);
           setProfile(user);
           setRestaurantId(user.restaurant_id || "all");
         }}
@@ -439,7 +417,7 @@ function App() {
             onClick={() => setShowNotifications(!showNotifications)}
           >
             <Bell size={18} />
-            <span />
+            {!!scoreAlerts.length && <span />}
           </button>
           <button
             className="avatar"
@@ -533,7 +511,7 @@ function App() {
                       : page === "employees"
                         ? "Create individual logins and assign each manager to their restaurant."
                         : page === "performance"
-                          ? "A clear view of reporting accountability across the week."
+                          ? "Reporting accountability for any date or range."
                           : page === "form"
                             ? "Complete each detail and submit within your reporting window."
                             : "Your access, restaurant and connection details."}
@@ -581,6 +559,7 @@ function App() {
           {loading && (
             <div className="loading-bar" aria-label="Loading workspace" />
           )}
+          {!!scoreAlerts.length && <ScoreAlertList alerts={scoreAlerts} users={users} restaurants={restaurants} admin={admin} />}
           <nav className="report-tabs" aria-label="Report types">
             {kinds.map((t) => {
               const I = IconFor[t];
@@ -625,25 +604,15 @@ function App() {
                     <CheckCheck size={13} />
                     Refresh
                   </button>
-                  <div className="segmented">
-                    {["Today", "This week", "This month"].map((p) => (
-                      <button
-                        key={p}
-                        className={period === p ? "selected" : ""}
-                        onClick={() => setPeriod(p)}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
                   <button className="button dark small" onClick={download}>
                     <Download size={13} />
                     Export CSV
                   </button>
                 </div>
               </div>
+              <DateRangePicker key={rangeLabel} value={dateRange} today={date} onChange={setDateRange} />
               {highlights
-                .filter((h) => scope === "all" || h.restaurant_id === scope)
+                .filter((h) => (scope === "all" || h.restaurant_id === scope) && inDateRange({business_date:indiaDate(new Date(h.created_at))},dateRange.from,dateRange.to))
                 .map((h) => (
                   <div className="highlight-strip" key={h.id}>
                     <span className="highlight-icon">
@@ -694,7 +663,7 @@ function App() {
                 />
                 <Stat
                   icon={CheckCheck}
-                  title="Submitted today"
+                  title="Reports submitted"
                   value={String(done).padStart(2, "0")}
                   meta={`${scheduledCount} scheduled reports`}
                   status="positive"
@@ -703,14 +672,14 @@ function App() {
                   icon={Clock}
                   title="Awaiting reports"
                   value={String(open).padStart(2, "0")}
-                  meta="Within the reporting window"
+                  meta="Not submitted yet, including upcoming windows"
                   status="amber"
                 />
                 <Stat
                   icon={TriangleAlert}
-                  title="Missed today"
+                  title="Reports missed"
                   value={String(missed).padStart(2, "0")}
-                  meta={"20 points per configured miss"}
+                  meta={"Deduction follows the report's saved rule"}
                   status="negative"
                 />
               </div>
@@ -720,7 +689,7 @@ function App() {
                     <div>
                       <h3>Reporting rhythm</h3>
                       <p>
-                        {"Your submission activity"} · {period.toLowerCase()}
+                        Submission activity · {rangeLabel}
                       </p>
                     </div>
                     <div className="legend">
@@ -728,18 +697,14 @@ function App() {
                         <i />
                         On time
                       </span>
-                      <span>
-                        <i />
-                        Missed
-                      </span>
                     </div>
                   </div>
-                  <Trend period={period} reports={visibleReports} />
+                  <Trend range={dateRange} reports={rangeReports} />
                 </section>
                 <section className="surface compliance-panel">
                   <div className="panel-heading">
                     <div>
-                      <h3>Today’s completion</h3>
+                      <h3>Selected dates’ completion</h3>
                       <p>A small check. A stronger service.</p>
                     </div>
                     <ArrowUpRight size={16} />
@@ -781,7 +746,7 @@ function App() {
                 <div className="panel-heading">
                   <div>
                     <h3>On the floor</h3>
-                    <p>Today’s reporting, restaurant by restaurant.</p>
+                    <p>Reporting for {rangeLabel}, restaurant by restaurant.</p>
                   </div>
                   <button
                     className="text-button"
@@ -801,7 +766,7 @@ function App() {
                             {t.charAt(0).toUpperCase() + t.slice(1)}
                           </th>
                         ))}
-                        <th>Weekly points</th>
+                        <th>Points earned in range</th>
                         <th />
                       </tr>
                     </thead>
@@ -837,13 +802,13 @@ function App() {
                                 aria-label={`${r.name} ${labels[t]}`}
                                 onClick={() => openForm(t, r.id)}
                               >
-                                <Badge status={status(r.id, t)} />
+                                <RangeReportStatus reports={rangeReports.filter(x=>x.restaurant_id===r.id&&x.type===t)} occurrences={occurrences.filter(o=>o.restaurant_id===r.id&&o.type===t)} range={dateRange} now={now} />
                               </button>
                             </td>
                           ))}
                           <td>
                             <strong className="points-number">
-                              {currentPoints(r.id)}
+                              {rangeSummary.managers.filter(m=>m.restaurant_id===r.id).reduce((n,m)=>n+m.earned,0)}
                             </strong>
                             <span className="points-suffix"> pts</span>
                           </td>
@@ -862,6 +827,7 @@ function App() {
                   </table>
                 </div>
               </section>
+              {admin && <ManagerRangeSummary managers={rangeSummary.managers} restaurants={restaurants} rangeLabel={rangeLabel} />}
             </>
           )}
           {page === "reports" && (
@@ -873,6 +839,7 @@ function App() {
                   Export CSV
                 </button>
               </div>
+              <DateRangePicker key={rangeLabel} value={dateRange} today={date} onChange={setDateRange} />
               <div className="report-cards">
                 {kinds.map((t) => {
                   const I = IconFor[t],
@@ -939,7 +906,7 @@ function App() {
                   </select>
                 </div>
                 <ReportTable
-                  reports={visibleReports.filter(matches)}
+                  reports={rangeReports.filter(matches)}
                   restaurants={restaurants}
                   onOpen={sourceReport}
                 />
@@ -947,21 +914,27 @@ function App() {
             </>
           )}
           {page === "performance" && (
+            <>
+            <DateRangePicker key={rangeLabel} value={dateRange} today={date} onChange={setDateRange} />
+            <ManagerRangeSummary managers={rangeSummary.managers} restaurants={restaurants} rangeLabel={rangeLabel} />
             <Performance
               restaurants={visibleRestaurants}
-              ledger={ledger.filter(
-                (l) => scope === "all" || l.restaurant_id === scope,
-              )}
-              reports={visibleReports}
+              ledger={rangeLedger}
+              reports={rangeReports}
+              rangeLabel={rangeLabel}
               now={now}
               currentPoints={currentPoints}
               users={users.filter(
                 (u) => scope === "all" || u.restaurant_id === scope,
               )}
             />
+            </>
           )}
           {page === "settings" && admin && (
             <SettingsPage
+              scoreSettings={scoreSettings} scoreCycles={scoreCycles}
+              onSaveScoring={async(rid,values)=>{await rpc('configure_scoring',{p_restaurant:rid,p_days:values.days,p_benchmark:values.benchmark});await load();notify('Points settings saved')}}
+              onResetPoints={async rid=>{await rpc('reset_points',{p_restaurant:rid});await load();notify('Points cycle started at 0; history kept')}}
               policies={policies}
               restaurants={restaurants}
               users={users}
@@ -976,12 +949,15 @@ function App() {
           )}
           {page === "employees" && admin && (
             <Employees
+              currentUserId={profile.id}
+              onSetup={async(id,phone)=>{const result=await issuePhoneSetup(id,phone);await load();return result}}
+              onSetActive={async(id,active)=>{await rpc('set_account_active',{p_user:id,p_active:active});await load()}}
               users={users}
               restaurants={restaurants}
               onCreate={async (form) => {
-                const input = employeeInput(form);
-                await createEmployee(input);
+                const result=await createEmployee(form);
                 await load();
+                return result;
               }}
             />
           )}
@@ -1030,7 +1006,7 @@ function App() {
                 <dt>Access</dt>
                 <dd>{"Enforced by database row-level security"}</dd>
               </dl>
-              <PasswordSettings />
+              <PasswordSettings profile={profile} />
               <button className="button dark" onClick={logout}>
                 Switch account <LogOut size={14} />
               </button>
@@ -1082,9 +1058,10 @@ function App() {
               <X size={16} />
             </button>
           </div>
-          <p>{open} reports are open for submission.</p>
+          <p>{open} reports are awaited for the selected dates.</p>
+          <ScoreAlertList alerts={scoreAlerts} users={users} restaurants={restaurants} admin={admin} />
           <p>
-            {missed} reports missed today{""}.
+            {missed} reports missed for the selected dates.
           </p>
           <button
             className="text-button"
@@ -1105,6 +1082,36 @@ function App() {
       )}
     </div>
   );
+}
+function ScoreAlertList({alerts,users,restaurants,admin}) {
+  return <div className="score-alert-list" aria-live="polite">{alerts.map(a=><div className="score-alert" key={a.id}>
+    <TriangleAlert size={17}/><div><strong>{admin?(users.find(u=>u.id===a.manager_id)?.name||'Manager'):a.kind==='approaching_benchmark'?'Your score is close to the benchmark':'Your score is below the benchmark'}</strong>
+    <p>{admin?`${restaurants.find(r=>r.id===a.restaurant_id)?.name||''} · `:''}{a.points} points · Benchmark {a.benchmark}.{a.kind==='approaching_benchmark'?` One more missed form could deduct up to ${a.next_deduction} points and take you below it.`:' Review the current reporting cycle.'}</p></div>
+  </div>)}</div>;
+}
+export function DateRangePicker({ value, today=indiaDate(), onChange }) {
+  const [draft,setDraft]=useState(value);
+  const error=validateRange(draft.from,draft.to,today);
+  return <form className="date-range-filter surface" onSubmit={e=>{e.preventDefault();if(!error)onChange(draft)}}>
+    <div><strong>Reporting dates</strong><small>India time · Up to six months of history</small></div>
+    <label>From<input type="date" required min={historyStart(today)} max={today} value={draft.from} onChange={e=>setDraft(p=>({...p,from:e.target.value}))}/></label>
+    <label>To<input type="date" required min={draft.from||historyStart(today)} max={today} value={draft.to} onChange={e=>setDraft(p=>({...p,to:e.target.value}))}/></label>
+    <button className="button dark small" disabled={!!error}>Apply dates</button>
+    <button type="button" className="button outline small" onClick={()=>{const next={from:today,to:today};setDraft(next);onChange(next)}}>Today</button>
+    {error&&<p className="error" role="alert">{error}</p>}
+  </form>;
+}
+function RangeReportStatus({reports,occurrences,range,now}) {
+  const s=summarizeRange({reports,occurrences,...range,now});
+  return <span className="range-report-status">{s.scheduled||s.submitted ? <>{s.submitted} submitted · {s.awaited} awaited · {s.missed} missed</>:'No reports scheduled'}</span>;
+}
+export function ManagerRangeSummary({managers,restaurants,rangeLabel}) {
+  return <section className="surface log-panel manager-range-summary">
+    <div className="panel-heading"><div><h3>Manager summary</h3><p>{rangeLabel} · Points earned from submissions; resets do not erase this history.</p></div></div>
+    <div className="table-scroll"><table><thead><tr><th>Manager</th><th>Restaurant</th><th>Submitted</th><th>Awaited</th><th>Missed</th><th>Points earned</th><th>Net point change</th></tr></thead><tbody>
+      {managers.map(m=><tr key={m.id}><td><strong>{m.name}</strong></td><td>{restaurants.find(r=>r.id===m.restaurant_id)?.name||'Previous assignment'}</td><td>{m.submitted}</td><td>{m.awaited}</td><td>{m.missed}</td><td>{m.earned}</td><td>{m.net>0?'+':''}{m.net}</td></tr>)}
+    </tbody></table>{!managers.length&&<div className="empty"><p>No manager activity in this range.</p></div>}</div>
+  </section>;
 }
 function Stat({ icon: Icon, title, value, meta, status = "" }) {
   return (
@@ -1198,6 +1205,7 @@ function Performance({
   now,
   currentPoints,
   users,
+  rangeLabel,
 }) {
   return (
     <>
@@ -1205,7 +1213,7 @@ function Performance({
         <h2>Manager accountability</h2>
         <span className="date-chip">
           <CalendarDays size={14} />
-          Week of {weekStart(now)}
+          {rangeLabel}
         </span>
       </div>
       <div className="surface performance">
@@ -1214,7 +1222,7 @@ function Performance({
             <h3>A good service starts with consistency.</h3>
             <p>
               {
-                "Actual scores require approved baseline, week boundary and manager assignments."
+                "Current cycle scores start at zero and cannot go below zero. The summary above shows activity for your selected dates."
               }
             </p>
           </div>
@@ -1228,7 +1236,7 @@ function Performance({
             managerId: u.id,
           }))
           .map((r, i) => (
-            <div className="performance-row" key={r.id}>
+            <div className="performance-row" key={r.managerId}>
               <span
                 className="restaurant-monogram"
                 style={{
@@ -1259,7 +1267,7 @@ function Performance({
           <div>
             <h3>Points ledger</h3>
             <p>
-              One entry per report occurrence. Previous weeks remain in history.
+              One entry per report occurrence. Previous cycles remain in history.
             </p>
           </div>
         </div>
@@ -2217,13 +2225,14 @@ function ReportForm({
     </section>
   );
 }
-export function SettingsPage({ policies, restaurants, users, onSave }) {
+export function SettingsPage({ policies, restaurants, users, onSave,scoreSettings=[],scoreCycles=[],onSaveScoring,onResetPoints }) {
   const [rid, setRid] = useState(restaurants[0]?.id),
     [type, setType] = useState("opening"),
     [draft, setDraft] = useState(() => refreshPolicyDraft(null, rid, "opening", policies)),
     [err, setErr] = useState(""),
     [busy, setBusy] = useState(false);
   const form = draft.form;
+  useEffect(()=>{if(!rid&&restaurants[0]?.id)setRid(restaurants[0].id)},[rid,restaurants]);
   useEffect(() => {
     setDraft((previous) => refreshPolicyDraft(previous, rid, type, policies));
   }, [rid, type, policies]);
@@ -2235,6 +2244,7 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
     }));
   return (
     <>
+      <ScoringSettings key={rid} restaurant={restaurants.find(r=>r.id===rid)} settings={scoreSettings.find(s=>s.restaurant_id===rid)} cycle={scoreCycles.find(c=>c.id===scoreSettings.find(s=>s.restaurant_id===rid)?.current_cycle_id)} onSave={values=>onSaveScoring(rid,values)} onReset={()=>onResetPoints(rid)} />
       <div className="settings-layout">
         <section className="surface settings-panel">
           <div className="panel-heading">
@@ -2306,17 +2316,8 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
                   onChange={(e) => set("reward", Number(e.target.value))}
                 />
               </Field>
-              <Field label="Missed report deduction">
-                <input readOnly value="20 points" />
-              </Field>
-              <Field label="Weekly starting points">
-                <input
-                  type="number"
-                  required
-                  value={form.baseline ?? ""}
-                  placeholder="To be confirmed"
-                  onChange={(e) => set("baseline", Number(e.target.value))}
-                />
+              <Field label="Points deducted for a missed report" hint="Choose zero or more. The actual deduction is capped at the manager's available points, so their score never goes below 0.">
+                <input required type="number" min="0" step="1" value={form.missed_penalty??''} onChange={e=>set('missed_penalty',e.target.value===''?'':Number(e.target.value))}/>
               </Field>
               <Field label="Reporting timezone">
                 <select
@@ -2326,27 +2327,7 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
                   <option>Asia/Kolkata</option>
                 </select>
               </Field>
-              <Field label="Sunday reset time">
-                <input
-                  type="time"
-                  required={true}
-                  value={form.reset_time || ""}
-                  onChange={(e) => set("reset_time", e.target.value)}
-                />
-              </Field>
-              <Field label="Score floor (blank allows negative scores)">
-                <input
-                  type="number"
-                  value={form.score_floor ?? ""}
-                  onChange={(e) =>
-                    set(
-                      "score_floor",
-                      e.target.value === "" ? null : Number(e.target.value),
-                    )
-                  }
-                />
-              </Field>
-              <Field label="When must an incident report be submitted?" hint="For incident reports: the manager submits on every selected reporting day, even when nothing happened. They can select ‘No incidents’ in the form.">
+              <Field label="When must an incident report be submitted?" hint="Incident reports are required every day, even when nothing happened. The manager can select ‘No incidents’ in the form.">
                 <select
                   value={form.incident_rule || ""}
                   required={type === "incident"}
@@ -2394,49 +2375,8 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
                   onChange={(e) => set("effective_from", e.target.value)}
                 />
               </Field>
-              <Field
-                label="Extra dates when this form is not required"
-                hint="Optional: enter closed dates such as 2026-12-25, one per line. No missed-form deduction is created for these dates."
-                wide
-              >
-                <textarea
-                  key={rid + type}
-                  defaultValue={(form.closed_dates || []).join("\n")}
-                  onBlur={(e) =>
-                    set(
-                      "closed_dates",
-                      e.target.value.split(/\s+/).filter(Boolean),
-                    )
-                  }
-                  rows={2}
-                />
-              </Field>
             </div>
-            <h3 className="form-section-title">Days this form must be filled</h3>
-            <p className="policy-help">Select the weekdays when this manager must submit this form. Choose all seven days if the restaurant operates every day. Unchecked days do not create a missed-form deduction.</p>
-            <div className="checkbox-list">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                (day, i) => (
-                  <label className="check-label" key={day}>
-                    <input
-                      type="checkbox"
-                      checked={form.operating_days?.includes(i) || false}
-                      onChange={(e) =>
-                        set(
-                          "operating_days",
-                          e.target.checked
-                            ? [...(form.operating_days || []), i]
-                            : (form.operating_days || []).filter(
-                                (d) => d !== i,
-                              ),
-                        )
-                      }
-                    />
-                    {day}
-                  </label>
-                ),
-              )}
-            </div>
+            <p className="policy-help">All four reports are required every day once their schedules are active: one opening report in the morning, then closing, incident and briefing reports in the evening.</p>
             {
               <>
                 <h3 className="form-section-title">
@@ -2445,9 +2385,9 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
                 <p className="policy-help">These are confirmations by you, the admin. Tick each item after agreeing the rule with your team. All eight are required to activate this schedule; you can save without activating while you decide.</p>
                 <div className="checkbox-list">
                   {[
-                    ["calendar", "I have checked the reporting days and deadlines."],
-                    ["points", "I have agreed the rewards, deductions and minimum score."],
-                    ["reset", "I have agreed when points reset each Sunday (India time)."],
+                    ["calendar", "I have checked the daily reporting deadlines."],
+                    ["points", "I have agreed the rewards and missed-report deductions."],
+                    ["reset", "I have set the reset interval and manually started the points cycle."],
                     ["responsibility", "The assigned manager knows they must submit this form."],
                     ["incident", "The team knows to report incidents, including days with none."],
                     ["handover", "Opening staff know to review the previous closing report."],
@@ -2501,9 +2441,9 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
             <ShieldCheck size={20} />
           </div>
           {[
-            "Reporting days and deadlines",
-            "Rewards, deductions and minimum score",
-            "Sunday points reset",
+            "Daily reporting deadlines",
+            "Rewards and deductions",
+            "Points reset interval and manual start",
             "Manager assigned and informed",
             "Incident reporting understood",
             "Opening team handover understood",
@@ -2532,7 +2472,7 @@ export function SettingsPage({ policies, restaurants, users, onSave }) {
           ))}
           <p className="policy-foot">
             {
-              "To turn this schedule on, complete the required fields, select at least one reporting day, assign a manager and confirm all eight rules. Leave ‘Turn on this reporting schedule’ unchecked to save it without starting reports or deductions."
+              "To turn this schedule on, complete the required fields, start the points cycle, assign a manager and confirm all eight rules. Reports will be required every day. Leave ‘Turn on this reporting schedule’ unchecked to save without activating it."
             }
           </p>
         </section>

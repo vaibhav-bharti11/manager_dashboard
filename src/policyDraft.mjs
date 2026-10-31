@@ -13,8 +13,8 @@ export function refreshPolicyDraft(previous, rid, type, policies) {
       handover_rule: existing.handover_rule || existing.approvals?.handover_rule,
     } : {
       restaurant_id: rid, type, start_time: "", end_time: "", reward: "",
-      baseline: "", enabled: false, timezone: "Asia/Kolkata",
-      operating_days: [], approvals: {},
+      missed_penalty: "", enabled: false, timezone: "Asia/Kolkata",
+      approvals: {},
     },
   };
 }

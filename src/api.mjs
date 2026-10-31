@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { readPages } from "./pagination.mjs";
 const url = import.meta.env.VITE_SUPABASE_URL,
   key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const supabase = url && key ? createClient(url, key) : null;
@@ -23,20 +24,19 @@ export async function signIn(email, password) {
     .select("*")
     .eq("id", data.user.id)
     .single();
-  if (err) {
+  if (err || !profile?.active || profile?.role!=='admin') {
     await supabase.auth.signOut({ scope: "local" });
     throw new Error(
-      err.code === "PGRST116"
+      !profile?.active ? 'This account is deactivated. Contact your administrator.' : profile?.role!=='admin' ? 'Managers sign in with phone number and PIN.' : err?.code === "PGRST116"
         ? "This account has no workspace assignment. Contact your administrator."
-        : err.message,
+        : err?.message || 'Account unavailable',
     );
   }
   return profile;
 }
 export async function readTable(table) {
-  const { data, error } = await supabase.from(table).select("*");
-  if (error) throw error;
-  return data;
+  const order = table==='score_settings'?'restaurant_id':table==='current_score_totals'?'manager_id':'id';
+  return readPages((from,to) => supabase.from(table).select("*").order(order).range(from,to));
 }
 export async function rpc(name, args) {
   const { data, error } = await supabase.rpc(name, args);
@@ -56,5 +56,22 @@ export async function createEmployee(input) {
     throw new Error(message);
   }
   if (data?.error) throw new Error(data.error);
-  return data.employee;
+  return data;
+}
+export async function phoneRequest(body) {
+ const {data,error}=await supabase.functions.invoke('phone-auth',{body});
+ if(error){let message=error.message;try{message=(await error.context.json()).error||message}catch{}throw Error(message)}
+ if(data?.error)throw Error(data.error);return data;
+}
+export async function signInPhone(phone,pin,activationCode) {
+ const data=await phoneRequest({action:activationCode?'activate':'login',phone,pin,...(activationCode?{activation_code:activationCode}:{})});
+ const {error}=await supabase.auth.setSession({access_token:data.session.access_token,refresh_token:data.session.refresh_token});if(error)throw error;
+ const {data:profile,error:profileError}=await supabase.from('profiles').select('*').eq('id',data.session.user.id).single();
+ if(profileError||!profile?.active){await supabase.auth.signOut({scope:'local'});throw Error('Account unavailable or deactivated. Contact your administrator.')}
+ return profile;
+}
+export async function issuePhoneSetup(user_id,phone) {
+ const {data,error}=await supabase.functions.invoke('employee-admin',{body:{action:'issue_setup',user_id,phone}});
+ if(error){let message=error.message;try{message=(await error.context.json()).error||message}catch{}throw Error(message)}
+ if(data?.error)throw Error(data.error);return data;
 }

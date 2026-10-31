@@ -1,195 +1,27 @@
-import React, { useState } from "react";
-import { Plus, Users, Lock, Check } from "lucide-react";
-export default function Employees({ users, restaurants, onCreate }) {
-  const [adding, setAdding] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [success, setSuccess] = useState("");
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    restaurant_id: restaurants[0]?.id || "",
-    password: "",
-  });
-  const set = (key, value) =>
-    setForm((p) => ({
-      ...p,
-      [key]: value,
-    }));
-  async function submit(e) {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-    setBusy(true);
-    try {
-      await onCreate(form);
-      setSuccess(
-        `Employee created. ${form.name} can now sign in to their assigned restaurant.`,
-      );
-      setForm({
-        ...form,
-        name: "",
-        email: "",
-        password: "",
-      });
-      setAdding(false);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <>
-      <div className="section-toolbar">
-        <div>
-          <h2>Your people</h2>
-          <p className="employee-intro">
-            Individual logins. The right restaurant, every time.
-          </p>
-        </div>
-        <button
-          className="button dark"
-          onClick={() => {
-            setAdding(!adding);
-            setError("");
-            setSuccess("");
-          }}
-        >
-          <Plus size={15} />
-          {adding ? "Close form" : "Add employee"}
-        </button>
-      </div>
-      {error && (
-        <div className="error" role="alert">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="employee-success" role="status">
-          <Check size={16} />
-          {success}
-        </div>
-      )}
-      {adding && (
-        <section className="surface employee-create">
-          <div className="panel-heading">
-            <div>
-              <h3>Add a restaurant manager</h3>
-              <p>Their login opens only their assigned restaurant.</p>
-            </div>
-            <Users size={22} />
-          </div>
-          <form onSubmit={submit}>
-            <div className="field-grid">
-              <label>
-                Full name
-                <input
-                  required
-                  minLength={2}
-                  maxLength={120}
-                  value={form.name}
-                  onChange={(e) => set("name", e.target.value)}
-                  autoComplete="off"
-                />
-              </label>
-              <label>
-                Email address
-                <input
-                  type="email"
-                  required
-                  value={form.email}
-                  onChange={(e) => set("email", e.target.value)}
-                  autoComplete="off"
-                />
-              </label>
-              <label>
-                Restaurant
-                <select
-                  required
-                  value={form.restaurant_id}
-                  onChange={(e) => set("restaurant_id", e.target.value)}
-                >
-                  {restaurants.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Initial password
-                <input
-                  required
-                  type="password"
-                  minLength={12}
-                  maxLength={72}
-                  value={form.password}
-                  onChange={(e) => set("password", e.target.value)}
-                  autoComplete="new-password"
-                  placeholder="At least 12 characters"
-                />
-              </label>
-            </div>
-            <p className="employee-help">
-              <Lock size={13} />
-              Passwords are handled securely and never shown in the employee
-              register. No invitation email is sent.
-            </p>
-            <button className="button dark" disabled={busy}>
-              {busy ? "Creating employee…" : "Create employee"}
-              <Plus size={14} />
-            </button>
-          </form>
-        </section>
-      )}
-      <section className="surface log-panel">
-        <div className="panel-heading">
-          <div>
-            <h3>Employee register</h3>
-            <p>
-              {`${users.filter((u) => u.role === "manager").length} restaurant managers · Admin access is separate`}
-            </p>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Restaurant</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    <strong>{u.name}</strong>
-                  </td>
-                  <td>{u.email || "Not recorded"}</td>
-                  <td>{u.role === "admin" ? "Administrator" : "Manager"}</td>
-                  <td>
-                    {u.role === "admin"
-                      ? "All restaurants"
-                      : restaurants.find((r) => r.id === u.restaurant_id)?.name}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!users.length && (
-            <div className="empty">
-              <Users size={24} />
-              <p>No employees added yet.</p>
-              <small>
-                Add each manager with their individual email and restaurant.
-              </small>
-            </div>
-          )}
-        </div>
-      </section>
-    </>
-  );
+import React,{useState} from 'react';
+import {Plus,Users,Check,Lock} from 'lucide-react';
+export default function Employees({users,restaurants,onCreate,onSetup,onSetActive,currentUserId}) {
+ const [adding,setAdding]=useState(false),[setup,setSetup]=useState(null),[form,setForm]=useState({name:'',phone:'',restaurant_id:restaurants[0]?.id||''}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[activation,setActivation]=useState(null),[confirm,setConfirm]=useState(null);
+ const change=(key,value)=>setForm(p=>({...p,[key]:value}));
+ const run=async fn=>{setError('');setBusy(true);try{await fn()}catch(e){setError(e.message)}finally{setBusy(false)}};
+ const submit=e=>{e.preventDefault();run(async()=>{const result=setup?await onSetup(setup.id,form.phone):await onCreate(form);setActivation(result);setNotice(setup?'Phone setup code created.':'Employee created. They can now choose their own PIN.');setAdding(false);setSetup(null);setForm({name:'',phone:'',restaurant_id:restaurants[0]?.id||''})})};
+ return <>
+  <div className="section-toolbar"><div><h2>Your people</h2><p className="employee-intro">Phone sign-in. Individual access. History stays with each person.</p></div><button className="button dark" onClick={()=>{setAdding(!adding);setSetup(null);setError('')}}><Plus size={15}/>{adding?'Close form':'Add employee'}</button></div>
+  {error&&<div className="error" role="alert">{error}</div>}
+  {notice&&<p className="employee-success" role="status"><Check size={16}/>{notice}</p>}
+  {activation&&<section className="surface activation-result"><h3>One-time activation code</h3><p>Give this code privately to the account owner. It expires in 24 hours. They choose their own PIN; you never see it.</p><strong className="activation-code">{activation.activation_code}</strong><p>Phone: {activation.phone||activation.employee?.phone}</p><button className="button outline small" onClick={async()=>{await navigator.clipboard.writeText(activation.activation_code);setNotice('Activation code copied. Share it privately with the account owner.')}}>Copy setup code</button><button className="button outline small" onClick={()=>{setActivation(null);setNotice('')}}>Hide code</button></section>}
+  {(adding||setup)&&<section className="surface employee-create"><div className="panel-heading"><div><h3>{setup?`Set up phone · ${setup.name}`:'Add a restaurant manager'}</h3><p>The person sets their own PIN using a one-time code.</p></div><Users size={22}/></div>
+   <form onSubmit={submit}><div className="field-grid">
+    {!setup&&<label>Full name<input required minLength={2} maxLength={120} autoComplete="off" value={form.name} onChange={e=>change('name',e.target.value)}/></label>}
+    <label>Phone number<input type="tel" required autoComplete="off" value={form.phone} onChange={e=>change('phone',e.target.value)} placeholder="Phone number with country code"/></label>
+    {!setup&&<label>Restaurant<select required value={form.restaurant_id} onChange={e=>change('restaurant_id',e.target.value)}>{restaurants.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>}
+   </div><p className="employee-help"><Lock size={13}/>No PIN is created by the admin. No SMS or invitation email is sent automatically.</p><button className="button dark" disabled={busy}>{busy?'Saving…':setup?'Create activation code':'Create employee'}</button>{setup&&<button type="button" className="button outline" onClick={()=>setSetup(null)}>Cancel</button>}</form>
+  </section>}
+  <section className="surface log-panel"><div className="panel-heading"><div><h3>Employee register</h3><p>{users.filter(u=>u.role==='manager'&&u.active).length} active restaurant managers · Deactivation keeps all report and point history.</p></div></div>
+  <div className="table-scroll"><table><thead><tr><th>Name</th><th>Phone</th><th>Role</th><th>Restaurant</th><th>Status</th><th>Sign-in setup</th><th>Access</th></tr></thead><tbody>{users.map(u=><tr key={u.id}>
+   <td><strong>{u.name}</strong></td><td>{u.phone||'Not added'}</td><td>{u.role==='admin'?'Administrator':'Manager'}</td><td>{u.role==='admin'?'All restaurants':restaurants.find(r=>r.id===u.restaurant_id)?.name}</td><td>{u.active?'Active':'Deactivated'}</td>
+   <td>{u.pin_ready?'PIN ready':<button className="text-button" disabled={busy||!u.active} onClick={()=>{setSetup(u);setAdding(false);setForm(p=>({...p,phone:u.phone||''}));setError('')}}>Set up phone + PIN</button>}</td>
+   <td>{confirm===u.id?<div className="access-confirm"><small>{u.active?'Disable sign-in and cancel future unsubmitted forms? History is kept.':'Restore sign-in? Reporting schedules must be activated again.'}</small><button className="text-button" disabled={busy} onClick={()=>run(async()=>{await onSetActive(u.id,!u.active);setConfirm(null);setNotice(u.active?'Account deactivated; history kept.':'Account access restored. Check the reporting schedules.')})}>Confirm</button><button className="text-button" onClick={()=>setConfirm(null)}>Cancel</button></div>:<button className="text-button" disabled={busy||u.id===currentUserId} onClick={()=>setConfirm(u.id)}>{u.id===currentUserId?'Your account':u.active?'Deactivate':'Restore access'}</button>}</td>
+  </tr>)}</tbody></table>{!users.length&&<div className="empty"><Users size={24}/><p>No employees added yet.</p><small>Add a manager with their phone number and assigned restaurant.</small></div>}</div></section>
+ </>;
 }

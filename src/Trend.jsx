@@ -1,12 +1,13 @@
 import React from "react";
 import {reportSeries} from "./reportSeries.mjs";
-export default function Trend({ period, reports }) {
-  const points=reportSeries(reports,period);
+import {rangeSeries} from "./reportingRange.mjs";
+export default function Trend({ period, reports, range }) {
+  const points=range?rangeSeries(reports,range.from,range.to):reportSeries(reports,period);
   const max = Math.max(4, ...points.map((p) => p.count)),
     path = points
       .map(
         (p, i) =>
-          `${i === 0 ? "M" : "L"}${(i * 700) / (points.length-1)} ${150 - (p.count / max) * 140}`,
+          `${i === 0 ? "M" : "L"}${points.length===1?350:(i * 700) / (points.length-1)} ${150 - (p.count / max) * 140}`,
       )
       .join(" ");
   return (
@@ -43,7 +44,7 @@ export default function Trend({ period, reports }) {
         {points.map((p, i) => (
           <circle
             key={i}
-            cx={(i * 700) / (points.length-1)}
+            cx={points.length===1?350:(i * 700) / (points.length-1)}
             cy={150 - (p.count / max) * 140}
             r="3"
             fill="#ad694b"
