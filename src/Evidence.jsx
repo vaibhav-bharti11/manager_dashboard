@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Upload, Download, FileText, Lock } from "lucide-react";
 import { supabase } from "./api.mjs";
+import { requestErrorMessage } from "./network.mjs";
 export default function Evidence({ occurrence, locked, onBusy }) {
   const [files, setFiles] = useState([]),
     [selected, setSelected] = useState(null),
@@ -15,8 +16,11 @@ export default function Evidence({ occurrence, locked, onBusy }) {
       .select("*")
       .eq("occurrence_id", occurrence.id)
       .order("created_at");
-    if (error) setError(error.message);
-    else setFiles(data || []);
+    if (error) setError(requestErrorMessage(error));
+    else {
+      setFiles(data || []);
+      setError("");
+    }
   }
   useEffect(() => {
     refresh();
@@ -60,7 +64,7 @@ export default function Evidence({ occurrence, locked, onBusy }) {
         "File uploaded securely. It will be visible with this report to the administrator.",
       );
     } catch (e) {
-      setError(e.message);
+      setError(requestErrorMessage(e));
     } finally {
       setBusy(false);
       onBusy?.(false);
@@ -83,7 +87,7 @@ export default function Evidence({ occurrence, locked, onBusy }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(e.message);
+      setError(requestErrorMessage(e));
     }
   }
   return (

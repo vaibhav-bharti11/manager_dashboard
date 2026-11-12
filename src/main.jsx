@@ -53,6 +53,7 @@ import templates from "./templates.json";
 import { refreshPolicyDraft } from "./policyDraft.mjs";
 import { indiaDate, historyStart, validateRange, inDateRange, summarizeRange } from "./reportingRange.mjs";
 import ScoringSettings from "./ScoringSettings.jsx";
+import { isNetworkFailure, requestErrorMessage } from "./network.mjs";
 import "./style.css";
 const IconFor = {
   opening: Sun,
@@ -1501,7 +1502,7 @@ function ReportForm({
       .eq("occurrence_id", occurrence.id)
       .maybeSingle()
       .then(({ data: d, error }) => {
-        if (error) setErr(error.message);
+        if (error) setErr(requestErrorMessage(error));
         else if (d?.data) setData(d.data);
         setDraftLoaded(true);
       });
@@ -1509,7 +1510,9 @@ function ReportForm({
   useEffect(() => {
     if (locked || !draftLoaded || !occurrence?.id) return;
     const timer = setTimeout(
-      () => onDraft(data, true).catch((e) => setErr(e.message)),
+      () => onDraft(data, true)
+        .then(() => setErr(previous => isNetworkFailure(previous) ? "" : previous))
+        .catch((e) => setErr(requestErrorMessage(e))),
       1800,
     );
     return () => clearTimeout(timer);

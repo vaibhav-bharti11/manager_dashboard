@@ -1,8 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { readPages } from "./pagination.mjs";
+import { fetchWithRecovery, requestErrorMessage } from "./network.mjs";
 const url = import.meta.env.VITE_SUPABASE_URL,
   key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-export const supabase = url && key ? createClient(url, key) : null;
+export const supabase = url && key ? createClient(url, key, {
+  global: { fetch: fetchWithRecovery() },
+}) : null;
 export async function signIn(email, password) {
   if (!supabase)
     throw Error(
@@ -41,7 +44,7 @@ export async function readTable(table) {
 }
 export async function rpc(name, args) {
   const { data, error } = await supabase.rpc(name, args);
-  if (error) throw error;
+  if (error) throw new Error(requestErrorMessage(error));
   return data;
 }
 export async function createEmployee(input) {
